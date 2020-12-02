@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # encoding: utf-8
 
+import datime_range
 import re
 import logging
 import requests
@@ -21,10 +22,10 @@ from prometheus_client.core import (
 # Disable InsecureRequestWarning
 requests.urllib3.disable_warnings()
 
-
 class RundeckMetricsCollector(object):
     default_host = '127.0.0.1'
     default_port = 9620
+    default_time_range =
     rundeck_token = getenv('RUNDECK_TOKEN')
 
     args_parser = ArgumentParser(description='Rundeck Metrics Exporter')
@@ -73,6 +74,12 @@ class RundeckMetricsCollector(object):
                              default=getenv('RUNDECK_PROJECTS_FILTER', []),
                              nargs='+'
                              )
+    args_parser.add_argument('--rundeck.executions.time_range',
+                              dest='rundeck_executions_time_range',
+                              help='Get executions within a time range',
+                              default=getenv('RUNDECK_EXECUTIIONS_TIME_RANGE', []),
+                              type=str
+                              )
     args_parser.add_argument('--rundeck.projects.executions.cache',
                              dest='rundeck_projects_executions_cache',
                              help='Cache requests for project executions metrics query.',
@@ -131,13 +138,15 @@ class RundeckMetricsCollector(object):
     """
     Method to get Rundeck projects executions info
     """
-    def get_project_executions(self, project: dict):
+    def get_project_executions(self, project: dict, time_range: dict):
         project_name = project['name']
         project_executions = None
         project_executions_status = list()
         jobs_list = list()
         metrics = None
-        endpoint = f'/project/{project_name}/executions?recentFilter=1d'
+        dt_from = time_range['from']
+        dt_to = time_range['to']
+        endpoint = f'/project/{project_name}/executions?begin=' + str(dt_from) + '&end=' + str(dt_to)
 
         try:
             if self.args.rundeck_projects_executions_cache:
@@ -284,6 +293,15 @@ class RundeckMetricsCollector(object):
     Method to collect Rundeck metrics
     """
     def collect(self):
+        """
+           Date time range within the executions has run
+        """
+        dt_range = datime_range.DateTimeRange()
+        time_range = dt_range.datetime_range_to_timestamp(self.args.rundeck_executions_time_range)
+
+        """
+        Metrics Requests
+        """
         metrics = self.request_data_from('/metrics/metrics')
         system_info = self.request_data_from('/system/info')
 
@@ -321,7 +339,8 @@ class RundeckMetricsCollector(object):
                     projects = self.request_data_from(endpoint)
 
             with ThreadPoolExecutor() as threadpool:
-                project_executions = threadpool.map(self.get_project_executions, projects)
+
+                project_executions = threadpool.map(self.get_project_executions, projects, time_range)
 
                 for executions in project_executions:
                     for execution in executions:
